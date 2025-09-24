@@ -12,6 +12,12 @@ ai-doctor-web/
 └── did-streaming/         # D-ID avatar streaming integration
 ```
 
+## 🎥 Demo Video
+
+https://github.com/lakshmeeshman/MediMitra---AI-Powered-Multilingual-Medical-Chatbot/assets/demo-video.mp4
+
+*Replace the above URL with your actual demo video URL after uploading*
+
 ## 🚀 Features
 
 ### Frontend (React)
