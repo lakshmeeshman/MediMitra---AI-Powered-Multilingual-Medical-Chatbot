@@ -222,19 +222,5 @@ For issues and questions:
 1. Check the documentation
 2. Search existing issues
 3. Create a new issue with detailed description
-4. Contact the development team
+4. Contact the development team : mankame.lucky510@gmail.com
 
-## 📅 Daily Update Checklist
-
-- [ ] Review and commit code changes
-- [ ] Update documentation if needed
-- [ ] Test all components
-- [ ] Push to development branch
-- [ ] Update project status
-- [ ] Review and merge pull requests (weekly)
-
----
-
-**Last Updated**: [Current Date]
-**Version**: 1.0.0
-**Maintainer**: [Your Name]
