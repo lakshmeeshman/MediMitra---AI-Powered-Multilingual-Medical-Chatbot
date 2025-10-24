@@ -296,7 +296,7 @@ app.post("/chat", async (req, res) => {
     const promptInput = `User message: "${userMessage}"`;
 
     // Use Groq LLM API
-    const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
+    const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     const model = "llama-3.3-70b-versatile";
 
@@ -752,7 +752,7 @@ app.post("/tts", async (req, res) => {
   }
 
   try {
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY || "AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY";
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
 
     // Google TTS Voice mapping for different languages and genders
     // Using WaveNet voices for better quality and pronunciation
@@ -882,7 +882,7 @@ app.get("/tts-stream", async (req, res) => {
   }
 
   try {
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY || "AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY";
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
 
     // Google TTS Voice mapping (same as POST /tts)
     // Using WaveNet voices for better quality and pronunciation
