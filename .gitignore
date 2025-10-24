@@ -170,3 +170,16 @@ test_*.mp3
 # API keys and sensitive data
 api.json
 firebase-admin-config.js
+
+# Large data files
+*.csv
+*.xlsx
+*.xls
+*.json
+*.pkl
+*.mp4
+*.mp3
+*.pdf
+*.png
+*.jpg
+*.jpeg
