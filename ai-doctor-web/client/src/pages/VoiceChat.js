@@ -243,10 +243,24 @@ function VoiceChat() {
           const audio = new Audio(audioUrl);
           console.log('🎵 Audio object created');
           
+          audio.onloadedmetadata = () => {
+            console.log('🎵 Audio metadata loaded, duration:', audio.duration, 'seconds');
+            setTotalMs(audio.duration * 1000);
+            setElapsedMs(0);
+            setCurrentAudio(audio);
+          };
+
+          audio.ontimeupdate = () => {
+            setElapsedMs(audio.currentTime * 1000);
+          };
+
           audio.onended = () => {
             console.log('✅ Audio playback completed');
             setSpeaking(false);
             setPaused(false);
+            setElapsedMs(0);
+            setTotalMs(0);
+            setCurrentAudio(null);
             URL.revokeObjectURL(audioUrl);
           };
           
@@ -376,8 +390,29 @@ function VoiceChat() {
     }
   };
 
-  const replay3s = () => seekToMs(elapsedMs - 3000);
-  const skip5s = () => seekToMs(elapsedMs + 5000);
+  const replay3s = () => {
+    console.log('⏪ Replaying 3 seconds...', { elapsedMs, totalMs });
+    if (currentAudio && totalMs > 0) {
+      const newTime = Math.max(0, elapsedMs - 3000);
+      currentAudio.currentTime = newTime / 1000;
+      setElapsedMs(newTime);
+      console.log('✅ Audio rewinded to:', newTime);
+    } else {
+      console.log('❌ No audio to rewind');
+    }
+  };
+
+  const skip5s = () => {
+    console.log('⏩ Skipping 5 seconds...', { elapsedMs, totalMs });
+    if (currentAudio && totalMs > 0) {
+      const newTime = Math.min(totalMs, elapsedMs + 5000);
+      currentAudio.currentTime = newTime / 1000;
+      setElapsedMs(newTime);
+      console.log('✅ Audio forwarded to:', newTime);
+    } else {
+      console.log('❌ No audio to skip');
+    }
+  };
 
   const stopSpeaking = () => {
     if (currentAudio) {
@@ -400,22 +435,28 @@ function VoiceChat() {
   };
 
   const pauseSpeaking = () => {
+    console.log('⏸️ Pausing speech...', { currentAudio: !!currentAudio, paused, speaking });
     if (currentAudio && !currentAudio.paused) {
       currentAudio.pause();
       setPaused(true);
+      console.log('✅ Audio paused');
     } else if (speaking && !paused) {
       synthRef.current.pause();
       setPaused(true);
+      console.log('✅ Speech synthesis paused');
     }
   };
 
   const resumeSpeaking = () => {
+    console.log('▶️ Resuming speech...', { currentAudio: !!currentAudio, paused, speaking });
     if (currentAudio && currentAudio.paused) {
       currentAudio.play();
       setPaused(false);
+      console.log('✅ Audio resumed');
     } else if (speaking && paused) {
       synthRef.current.resume();
       setPaused(false);
+      console.log('✅ Speech synthesis resumed');
     }
   };
 
@@ -770,13 +811,23 @@ function VoiceChat() {
             </button>
             
             {speaking && (
-              <button onClick={pauseSpeaking} className="pause-btn">
+              <button 
+                onClick={paused ? resumeSpeaking : pauseSpeaking} 
+                className="pause-btn"
+                style={{margin: '5px', padding: '8px 16px', backgroundColor: paused ? '#4CAF50' : '#FF9800', color: 'white', border: 'none', borderRadius: '5px'}}
+              >
                 {paused ? "▶️" : "⏸️"} {paused ? t.resume : t.pause}
               </button>
             )}
             {speaking && (
               <div className="tts-progress" style={{display:'flex',alignItems:'center',gap:'8px',width:'100%',maxWidth:'520px',marginTop:'8px'}}>
-                <button onClick={replay3s} className="small-btn">⏪ 3s</button>
+                <button 
+                  onClick={replay3s} 
+                  className="small-btn"
+                  style={{padding: '4px 8px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '3px', fontSize: '12px'}}
+                >
+                  ⏪ 3s
+                </button>
                 <div 
                   className="progress-bar" 
                   onClick={(e)=>{
@@ -790,7 +841,13 @@ function VoiceChat() {
                     style={{position:'absolute',left:0,top:0,bottom:0,width: totalMs? `${Math.min(100, (elapsedMs/totalMs)*100)}%`:'0%',background:'#4A90E2',borderRadius:'999px'}}
                   />
                 </div>
-                <button onClick={skip5s} className="small-btn">5s ⏩</button>
+                <button 
+                  onClick={skip5s} 
+                  className="small-btn"
+                  style={{padding: '4px 8px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '3px', fontSize: '12px'}}
+                >
+                  5s ⏩
+                </button>
               </div>
             )}
           </div>
