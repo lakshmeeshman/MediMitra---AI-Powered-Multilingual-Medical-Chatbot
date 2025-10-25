@@ -764,13 +764,24 @@ app.post("/tts", async (req, res) => {
   console.log(`🎤 Using Google Cloud TTS for ${language} - professional pronunciation`);
   
   try {
-    // Use SSML for better pronunciation control
-    const ssmlText = language === "hi" || language === "mr" 
-      ? `<speak><prosody rate="slow" pitch="low">${text}</prosody></speak>`
-      : text;
+    // Preprocess text for better pronunciation
+    let processedText = text;
+    if (language === "hi" || language === "mr") {
+      // Clean up text for better pronunciation
+      processedText = text
+        .replace(/[^\u0900-\u097F\s.,!?]/g, '') // Keep only Devanagari characters
+        .replace(/\s+/g, ' ') // Normalize whitespace
+        .trim();
+    }
+    
+    // Use SSML for Hindi and Marathi for better pronunciation
+    const useSSML = language === "hi" || language === "mr";
+    const ssmlText = useSSML 
+      ? `<speak><prosody rate="0.8" pitch="0.0">${processedText}</prosody></speak>`
+      : processedText;
     
     const request = {
-      input: language === "hi" || language === "mr" ? { ssml: ssmlText } : { text: text },
+      input: useSSML ? { ssml: ssmlText } : { text: processedText },
       voice: {
         languageCode: language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-US",
         name: language === "hi" ? "hi-IN-Standard-A" : language === "mr" ? "mr-IN-Standard-A" : "en-US-Wavenet-A",
