@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { auth, db } from "../firebase";
-import { collection, addDoc, query, orderBy, where, deleteDoc, doc, getDocs, serverTimestamp } from "firebase/firestore";
+import { collection, addDoc, query, orderBy, where, getDocs, serverTimestamp } from "firebase/firestore";
 import "../index.css";
 
 function VoiceChat() {
@@ -18,24 +18,26 @@ function VoiceChat() {
   const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [totalMs, setTotalMs] = useState(0);
-  const [voiceSettings, setVoiceSettings] = useState({
-    pitch: 1,
-    rate: 1,
-    gender: "male"
-  });
-  const [audioRef, setAudioRef] = useState(null);
   const [currentAudio, setCurrentAudio] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
   const [chatHistory, setChatHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  const [deletingSession, setDeletingSession] = useState(null);
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const chatRef = useRef();
   const synthRef = useRef(window.speechSynthesis);
   const [availableVoices, setAvailableVoices] = useState([]);
   const recognitionRef = useRef(null);
   const progressTimerRef = useRef(null);
+  const [audioContextInitialized, setAudioContextInitialized] = useState(false);
   const navigate = useNavigate();
+
+  // Initialize audio context on first user interaction
+  const initializeAudioContext = () => {
+    if (!audioContextInitialized) {
+      console.log('🎵 Initializing audio context for first time');
+      setAudioContextInitialized(true);
+    }
+  };
 
   // Translation dictionary for UI elements
   const translations = {
@@ -159,16 +161,26 @@ function VoiceChat() {
     };
     const preferredLangs = langMap[targetLang] || langMap.en;
 
-    // Rank voices by: language match -> gender hint in name -> contains Neural/Google
-    const scored = availableVoices.map(v => {
-      const langScore = preferredLangs.findIndex(code => (v.lang || "").toLowerCase().startsWith(code.toLowerCase()));
-      const genderHint = (v.name || "").toLowerCase();
-      const genderScore = preferredGender === "female"
-        ? (genderHint.includes("female") || genderHint.includes("woman") ? 0 : 1)
-        : (genderHint.includes("male") || genderHint.includes("man") ? 0 : 1);
-      const qualityScore = (genderHint.includes("neural") || genderHint.includes("google") || genderHint.includes("natural")) ? 0 : 1;
-      return { v, score: [langScore === -1 ? 99 : langScore, genderScore, qualityScore] };
-    });
+  // Enhanced voice selection for Indian languages
+  const scored = availableVoices.map(v => {
+    const langScore = preferredLangs.findIndex(code => (v.lang || "").toLowerCase().startsWith(code.toLowerCase()));
+    const genderHint = (v.name || "").toLowerCase();
+    const genderScore = preferredGender === "female"
+      ? (genderHint.includes("female") || genderHint.includes("woman") ? 0 : 1)
+      : (genderHint.includes("male") || genderHint.includes("man") ? 0 : 1);
+    
+    // Enhanced quality scoring for Indian languages
+    let qualityScore = 1;
+    if (genderHint.includes("neural") || genderHint.includes("google") || genderHint.includes("natural")) {
+      qualityScore = 0;
+    } else if (genderHint.includes("india") || genderHint.includes("indian")) {
+      qualityScore = 0.5; // Prefer Indian voices
+    } else if (genderHint.includes("hindi") || genderHint.includes("marathi")) {
+      qualityScore = 0.3; // Prefer language-specific voices
+    }
+    
+    return { v, score: [langScore === -1 ? 99 : langScore, genderScore, qualityScore] };
+  });
 
     scored.sort((a, b) => {
       for (let i = 0; i < a.score.length; i++) {
@@ -180,7 +192,10 @@ function VoiceChat() {
     return (scored[0] && scored[0].score[0] !== 99) ? scored[0].v : availableVoices[0];
   };
 
-  const speak = async (text) => {
+  const speak = async (text, lang = language) => {
+    // Initialize audio context on first interaction
+    initializeAudioContext();
+    
     // Stop mic while speaking to avoid feedback, ignore errors
     if (listening) {
       try { recognitionRef.current?.stop(); } catch (_) {}
@@ -194,7 +209,7 @@ function VoiceChat() {
       .replace(/\*\*(.*?)\*\*/g, "$1")
       .replace(/\*(.*?)\*/g, "$1")
       .replace(/[`_~]/g, "")
-      .replace(/[^\p{L}\p{N}\s.,!?%:;()\-]/gu, " ")
+      .replace(/[^\p{L}\p{N}\s.,!?%:;()-]/gu, " ")
       .replace(/\s+/g, " ")
       .trim();
 
@@ -204,58 +219,126 @@ function VoiceChat() {
       setSpeaking(true);
       setPaused(false);
 
-      // Use Google TTS with optimized settings for all languages
-      const audioUrl = `http://localhost:5051/tts-stream?text=${encodeURIComponent(cleaned)}&language=${encodeURIComponent(language)}&gender=${encodeURIComponent(voiceSettings.gender)}`;
-      const audio = new Audio(audioUrl);
+      // Use server Google Cloud TTS for all languages
+      console.log(`🎤 Using Server Google Cloud TTS for ${lang} - professional pronunciation`);
       
-      setCurrentAudio(audio);
+      try {
+        const response = await fetch('http://localhost:5051/tts', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            text: cleaned,
+            language: lang,
+            gender: 'male'
+          })
+        });
 
-      // Set up audio event listeners
-      audio.onloadedmetadata = () => {
-        setTotalMs(Math.round(audio.duration * 1000));
-        setElapsedMs(0);
-      };
-
-      audio.ontimeupdate = () => {
-        setElapsedMs(Math.round(audio.currentTime * 1000));
-      };
-
-      audio.onended = () => {
+        if (response.ok) {
+          const audioBlob = await response.blob();
+          console.log('🎵 Audio blob received, size:', audioBlob.size, 'bytes');
+          const audioUrl = URL.createObjectURL(audioBlob);
+          console.log('🎵 Audio URL created:', audioUrl);
+          const audio = new Audio(audioUrl);
+          console.log('🎵 Audio object created');
+          
+          audio.onended = () => {
+            console.log('✅ Audio playback completed');
+            setSpeaking(false);
+            setPaused(false);
+            URL.revokeObjectURL(audioUrl);
+          };
+          
+          audio.onerror = (error) => {
+            console.error('❌ Audio playback error:', error);
+            setSpeaking(false);
+            setPaused(false);
+            URL.revokeObjectURL(audioUrl);
+            console.log('❌ Server TTS audio playback failed, but NOT falling back to browser TTS');
+          };
+          
+          console.log('🎵 Starting audio playback...');
+          
+          // Simple, direct audio playback
+          try {
+            await audio.play();
+            console.log('✅ Audio started playing successfully');
+          } catch (playError) {
+            console.error('❌ Audio play failed:', playError);
+            setSpeaking(false);
+            setPaused(false);
+            URL.revokeObjectURL(audioUrl);
+          }
+        } else {
+          console.log('❌ Server TTS failed, but NOT falling back to browser TTS');
+          setSpeaking(false);
+          setPaused(false);
+        }
+      } catch (error) {
+        console.error('❌ TTS request failed:', error);
+        console.log('❌ Server TTS request failed, but NOT falling back to browser TTS');
         setSpeaking(false);
         setPaused(false);
-        setElapsedMs(0);
-        setTotalMs(0);
-        setCurrentAudio(null);
-      };
+      }
+      return;
 
-      audio.onerror = () => {
-        setSpeaking(false);
-        setPaused(false);
-        console.error('Audio playback error');
-        setCurrentAudio(null);
-      };
-
-      // Start playing
-      await audio.play();
 
     } catch (error) {
       console.error('TTS Error:', error);
       setSpeaking(false);
       setPaused(false);
-      // Fallback to browser TTS if 11labs fails
-      fallbackSpeak(cleaned);
+      console.log('❌ TTS Error occurred, but NOT falling back to browser TTS');
     }
   };
 
-  // Fallback to browser TTS if 11labs fails
+  // Enhanced Browser TTS for regional languages with proper voice selection
   const fallbackSpeak = (text) => {
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-IN";
-    utterance.pitch = voiceSettings.pitch || 1;
-    utterance.rate = voiceSettings.rate || 1;
+    
+    // Get all available voices
+    const voices = window.speechSynthesis.getVoices();
+    console.log('Available voices:', voices.map(v => ({ name: v.name, lang: v.lang })));
+    
+    // Set language codes for better regional pronunciation
+    if (language === "hi") {
+      utterance.lang = "hi-IN"; // Hindi (India)
+      // Try to find Hindi voice
+      const hindiVoice = voices.find(v => 
+        v.lang.startsWith('hi') || 
+        v.name.toLowerCase().includes('hindi') ||
+        v.name.toLowerCase().includes('india')
+      );
+      if (hindiVoice) {
+        utterance.voice = hindiVoice;
+        console.log('Using Hindi voice:', hindiVoice.name);
+      }
+    } else if (language === "mr") {
+      utterance.lang = "mr-IN"; // Marathi (India)
+      // Try to find Marathi voice
+      const marathiVoice = voices.find(v => 
+        v.lang.startsWith('mr') || 
+        v.name.toLowerCase().includes('marathi') ||
+        v.name.toLowerCase().includes('india')
+      );
+      if (marathiVoice) {
+        utterance.voice = marathiVoice;
+        console.log('Using Marathi voice:', marathiVoice.name);
+      }
+    } else {
+      utterance.lang = "en-IN"; // English (India)
+    }
+    
+    // Optimized settings for regional languages
+    utterance.pitch = language === "hi" || language === "mr" ? 0.9 : 1.0; // Slightly lower pitch
+    utterance.rate = language === "hi" || language === "mr" ? 0.8 : 0.9; // Slower rate for better pronunciation
+    utterance.volume = 1.0;
 
-    const chosen = selectBestVoice(language, voiceSettings.gender);
-    if (chosen) utterance.voice = chosen;
+    // If no specific voice found, use the best available
+    if (!utterance.voice) {
+      const chosen = selectBestVoice(language, "male");
+      if (chosen) utterance.voice = chosen;
+    }
 
     utterance.onend = () => {
       setSpeaking(false);
@@ -386,13 +469,6 @@ function VoiceChat() {
     recognitionRef.current = recognition;
   };
 
-  const handleVoiceSettingsChange = (e) => {
-    const { name, value } = e.target;
-    setVoiceSettings((prev) => ({
-      ...prev,
-      [name]: name === "pitch" || name === "rate" ? parseFloat(value) : value,
-    }));
-  };
 
   const sendMessage = async () => {
     if (!input.trim()) return;
@@ -414,17 +490,17 @@ function VoiceChat() {
       if (res.ok) {
         const data = await res.json();
         await saveMessageToFirebase("ai", data.reply);
-        speak(data.reply); // Speak the AI response
+        speak(data.reply, language); // Speak the AI response
       } else {
         const errorMsg = translations[language]?.error || translations.en.error;
         await saveMessageToFirebase("ai", errorMsg);
-        speak(errorMsg);
+        speak(errorMsg, language);
       }
     } catch (error) {
       console.error("Error sending message:", error);
       const errorMsg = translations[language]?.error || translations.en.error;
       await saveMessageToFirebase("ai", errorMsg);
-      speak(errorMsg);
+      speak(errorMsg, language);
     } finally {
       setLoading(false);
     }
@@ -538,7 +614,7 @@ function VoiceChat() {
   const t = translations[language] || translations.en;
 
   return (
-    <div className="chat-container voice-chat">
+    <div className="chat-container voice-chat" onClick={initializeAudioContext}>
       {/* Header */}
       <div className="chat-header">
         <div className="header-left">
@@ -561,6 +637,16 @@ function VoiceChat() {
         </div>
       </div>
 
+      {/* Audio Test Button */}
+      <div className="audio-test-controls">
+        <button 
+          onClick={() => speak("Hello, this is a test of the audio system", language)} 
+          className="test-audio-btn"
+          style={{margin: '10px', padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '5px'}}
+        >
+          🎵 Test Audio
+        </button>
+      </div>
 
       {/* Chat History Button */}
       <div className="chat-history-controls">
@@ -749,49 +835,6 @@ function VoiceChat() {
             </div>
           </div>
 
-          {/* Voice Settings */}
-          <div className="voice-settings">
-            <h4>Voice Settings</h4>
-            <div className="settings-grid">
-              <div className="setting-item">
-                <label>Pitch:</label>
-                <input 
-                  type="range" 
-                  min="0" 
-                  max="2" 
-                  step="0.1" 
-                  name="pitch" 
-                  value={voiceSettings.pitch} 
-                  onChange={handleVoiceSettingsChange}
-                />
-                <span>{voiceSettings.pitch}</span>
-              </div>
-              <div className="setting-item">
-                <label>Speed:</label>
-                <input 
-                  type="range" 
-                  min="0.5" 
-                  max="2" 
-                  step="0.1" 
-                  name="rate" 
-                  value={voiceSettings.rate} 
-                  onChange={handleVoiceSettingsChange}
-                />
-                <span>{voiceSettings.rate}</span>
-              </div>
-              <div className="setting-item">
-                <label>Voice:</label>
-                <select 
-                  name="gender" 
-                  value={voiceSettings.gender} 
-                  onChange={handleVoiceSettingsChange}
-                >
-                  <option value="male">Male</option>
-                  <option value="female">Female</option>
-                </select>
-              </div>
-            </div>
-          </div>
         </>
       )}
     </div>

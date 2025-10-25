@@ -1,6 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
+const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
 require("dotenv").config();
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const translate = require('@vitalets/google-translate-api').default;
@@ -64,6 +65,12 @@ async function performAdvancedNLPAnalysis(text) {
 
 const app = express();
 const PORT = process.env.PORT || 5051;
+
+// Initialize Google Cloud TTS client with service account
+const ttsClient = new TextToSpeechClient({
+  keyFilename: './google-credentials.json',
+  projectId: 'tts-medimitra'
+});
 
 app.use(cors());
 app.use(express.json());
@@ -296,7 +303,7 @@ app.post("/chat", async (req, res) => {
     const promptInput = `User message: "${userMessage}"`;
 
     // Use Groq LLM API
-    const GROQ_API_KEY = process.env.GROQ_API_KEY;
+    const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
     const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     const model = "llama-3.3-70b-versatile";
 
@@ -743,7 +750,7 @@ Guidelines:
   }
 }
 
-// Text-to-Speech endpoint using Google TTS API
+// Text-to-Speech endpoint with multiple TTS services for better regional pronunciation
 app.post("/tts", async (req, res) => {
   const { text, language = "en", gender = "male" } = req.body;
   
@@ -751,8 +758,108 @@ app.post("/tts", async (req, res) => {
     return res.status(400).json({ error: "Text is required" });
   }
 
+  console.log(`🎤 Processing TTS for ${language} - trying multiple services`);
+  
+  // For all languages, use Google Cloud TTS with service account
+  console.log(`🎤 Using Google Cloud TTS for ${language} - professional pronunciation`);
+  
   try {
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    // Use SSML for better pronunciation control
+    const ssmlText = language === "hi" || language === "mr" 
+      ? `<speak><prosody rate="slow" pitch="low">${text}</prosody></speak>`
+      : text;
+    
+    const request = {
+      input: language === "hi" || language === "mr" ? { ssml: ssmlText } : { text: text },
+      voice: {
+        languageCode: language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-US",
+        name: language === "hi" ? "hi-IN-Standard-A" : language === "mr" ? "mr-IN-Standard-A" : "en-US-Wavenet-A",
+        ssmlGender: gender === "male" ? "MALE" : "FEMALE"
+      },
+      audioConfig: {
+        audioEncoding: "MP3",
+        speakingRate: language === "hi" || language === "mr" ? 0.6 : 0.7, // Even slower for regional languages
+        pitch: language === "hi" || language === "mr" ? -1.0 : 0.0, // Slightly lower pitch for regional languages
+        volumeGainDb: 0.0,
+        sampleRateHertz: 24000
+      }
+    };
+
+    const [response] = await ttsClient.synthesizeSpeech(request);
+
+    if (response.audioContent) {
+      console.log(`✅ Google Cloud TTS successful for ${language} - professional speech`);
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': response.audioContent.length,
+      });
+      res.send(response.audioContent);
+      return;
+    }
+  } catch (googleError) {
+    console.error("Google Cloud TTS error:", googleError.message);
+    console.log("🔄 Falling back to browser TTS");
+    
+    // Fallback to browser TTS
+    return res.json({
+      message: "Use browser TTS",
+      useBrowserTTS: true,
+      language: language,
+      text: text,
+      fallback: "browser_tts",
+      instructions: "Browser TTS provides basic text-to-speech"
+    });
+  }
+
+  // For other languages, use Google TTS
+  try {
+    const response = await axios.post(
+      `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_TTS_API_KEY || 'AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY'}`,
+      {
+        input: { text: text },
+        voice: {
+          languageCode: "en-US",
+          name: "en-US-Wavenet-A",
+          ssmlGender: gender === "male" ? "MALE" : "FEMALE"
+        },
+        audioConfig: {
+          audioEncoding: "MP3",
+          speakingRate: 0.9,
+          pitch: 0.0
+        }
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    if (response.data && response.data.audioContent) {
+      const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': audioBuffer.length,
+      });
+      res.send(audioBuffer);
+      return;
+    }
+  } catch (googleError) {
+    console.error("Google Cloud TTS error:", googleError.message);
+    console.log("🔄 Falling back to browser TTS");
+    
+    // Fallback to browser TTS
+    return res.json({
+      message: "Use browser TTS",
+      useBrowserTTS: true,
+      language: language,
+      text: text
+    });
+  }
+
+  try {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY || "AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY";
 
     // Google TTS Voice mapping for different languages and genders
     // Using WaveNet voices for better quality and pronunciation
@@ -871,18 +978,20 @@ app.get("/tts-veena", async (req, res) => {
   }
 });
 
-// Low-latency streaming TTS endpoint using Google TTS API (GET for direct <audio src=...>)
+// Low-latency streaming TTS endpoint using Google Cloud TTS for all languages
 app.get("/tts-stream", async (req, res) => {
   const text = req.query.text || "";
   const language = req.query.language || "en";
   const gender = req.query.gender || "male";
 
+  console.log(`🎤 Using Google Cloud TTS stream for ${language} - professional pronunciation`);
+
   if (!text.trim()) {
     return res.status(400).json({ error: "Text is required" });
   }
 
-  try {
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+         try {
+           const apiKey = "AIzaSyD207LLJ8x6c045v5_u4rtI7vqGFeXrKHA";
 
     // Google TTS Voice mapping (same as POST /tts)
     // Using WaveNet voices for better quality and pronunciation
