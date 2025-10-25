@@ -198,7 +198,9 @@ This project is licensed under the MIT License.
 
 For support and questions:
 - Create an issue in the repository
-- Contact the development team
+- Contact the development team: mankame.lucky510@gmail.com
+- Check the documentation
+- Search existing issues
 
 ## 🔄 Updates
 
@@ -206,6 +208,7 @@ For support and questions:
 - **v1.1.0**: Added avatar integration
 - **v1.2.0**: Implemented appointment booking
 - **v1.3.0**: Added medical shop locator
+- **v1.4.0**: Enhanced TTS pronunciation for Hindi/Marathi
 
 ---
 
