@@ -637,16 +637,6 @@ function VoiceChat() {
         </div>
       </div>
 
-      {/* Audio Test Button */}
-      <div className="audio-test-controls">
-        <button 
-          onClick={() => speak("Hello, this is a test of the audio system", language)} 
-          className="test-audio-btn"
-          style={{margin: '10px', padding: '10px', backgroundColor: '#4CAF50', color: 'white', border: 'none', borderRadius: '5px'}}
-        >
-          🎵 Test Audio
-        </button>
-      </div>
 
       {/* Chat History Button */}
       <div className="chat-history-controls">

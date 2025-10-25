@@ -776,13 +776,13 @@ app.post("/tts", async (req, res) => {
         name: language === "hi" ? "hi-IN-Standard-A" : language === "mr" ? "mr-IN-Standard-A" : "en-US-Wavenet-A",
         ssmlGender: gender === "male" ? "MALE" : "FEMALE"
       },
-      audioConfig: {
-        audioEncoding: "MP3",
-        speakingRate: language === "hi" || language === "mr" ? 0.6 : 0.7, // Even slower for regional languages
-        pitch: language === "hi" || language === "mr" ? -1.0 : 0.0, // Slightly lower pitch for regional languages
-        volumeGainDb: 0.0,
-        sampleRateHertz: 24000
-      }
+               audioConfig: {
+                 audioEncoding: "MP3",
+                 speakingRate: language === "hi" || language === "mr" ? 0.8 : 0.9, // Faster speaking rate
+                 pitch: language === "hi" || language === "mr" ? -1.0 : 0.0, // Slightly lower pitch for regional languages
+                 volumeGainDb: 0.0,
+                 sampleRateHertz: 24000
+               }
     };
 
     const [response] = await ttsClient.synthesizeSpeech(request);
