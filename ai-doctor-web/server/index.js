@@ -784,7 +784,7 @@ app.post("/tts", async (req, res) => {
       input: useSSML ? { ssml: ssmlText } : { text: processedText },
       voice: {
         languageCode: language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-US",
-        name: language === "hi" ? "hi-IN-Standard-A" : language === "mr" ? "mr-IN-Standard-A" : "en-US-Wavenet-A",
+        name: language === "hi" ? "hi-IN-Wavenet-A" : language === "mr" ? "mr-IN-Wavenet-A" : "en-US-Wavenet-A",
         ssmlGender: gender === "male" ? "MALE" : "FEMALE"
       },
                audioConfig: {
