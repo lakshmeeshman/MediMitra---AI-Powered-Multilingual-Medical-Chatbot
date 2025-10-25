@@ -303,7 +303,7 @@ app.post("/chat", async (req, res) => {
     const promptInput = `User message: "${userMessage}"`;
 
     // Use Groq LLM API
-    const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
+    const GROQ_API_KEY = process.env.GROQ_API_KEY;
     const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     const model = "llama-3.3-70b-versatile";
 
