@@ -1,8 +1,6 @@
 const express = require("express");
 const cors = require("cors");
 const axios = require("axios");
-const { TextToSpeechClient } = require('@google-cloud/text-to-speech');
-const { pipeline } = require('@huggingface/transformers');
 require("dotenv").config();
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const translate = require('@vitalets/google-translate-api').default;
@@ -66,16 +64,6 @@ async function performAdvancedNLPAnalysis(text) {
 
 const app = express();
 const PORT = process.env.PORT || 5051;
-
-// Working TTS implementation from medical-voice-assistant
-const GOOGLE_TTS_API_KEY = process.env.GOOGLE_TTS_API_KEY || 'AIzaSyD207LLJ8x6c045v5_u4rtI7vqGFeXrKHA';
-const GOOGLE_TTS_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${GOOGLE_TTS_API_KEY}`;
-
-function selectVoice(lang) {
-  if (lang === "hi") return { languageCode: "hi-IN", name: "hi-IN-Wavenet-A" };
-  if (lang === "mr") return { languageCode: "mr-IN", name: "mr-IN-Wavenet-A" };
-  return { languageCode: "en-US", name: "en-US-Wavenet-A" };
-}
 
 app.use(cors());
 app.use(express.json());
@@ -307,31 +295,29 @@ app.post("/chat", async (req, res) => {
     const targetLanguageName = languageMap[lang] || "English";
     const promptInput = `User message: "${userMessage}"`;
 
-    // Use Groq API for medical responses (fallback to working approach)
-    const GROQ_API_KEY = process.env.GROQ_API_KEY || 'gsk_your_groq_api_key_here';
+    // Use Groq LLM API
+    const GROQ_API_KEY = process.env.GROQ_API_KEY || "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";
     const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
     const model = "llama-3.3-70b-versatile";
 
-           const medicalPrompt = `You are a friendly medical AI assistant. Provide helpful, conversational medical guidance in a warm, empathetic tone.
+    const systemPrompt = `You are a professional AI health assistant. Provide helpful, accurate medical guidance in a friendly, empathetic, and professional tone.
 
 CRITICAL: Reply ONLY in ${targetLanguageName} using its native script (no transliteration). Do not include any other language.
 
-Response Format:
-- Keep responses conversational and natural, like talking to a friend
-- Use simple, clear language
-- Provide practical, actionable advice
-- Include natural remedies and lifestyle tips
-- Ask 1-2 follow-up questions to help better
-- Always remind about consulting doctors for serious issues
-- If user writes in transliterated Hindi/Marathi (like "muzhe sir dard hai"), understand it and respond in proper Hindi/Marathi
-
-User message: "${userMessage}"`;
+Guidelines:
+- Give specific, actionable advice with brief explanations
+- Provide VARIED medical guidance - not just OTC medications
+- Include natural remedies, lifestyle changes, dietary advice, and preventive measures
+- Ask 1-2 clarifying questions if needed
+- Provide next steps and when to seek medical care
+- Focus on ROOT CAUSE analysis and comprehensive treatment approaches
+- Avoid repetitive OTC medication recommendations unless specifically appropriate`;
 
     const groqPayload = {
       model,
       messages: [
-        { role: "system", content: medicalPrompt },
-        { role: "user", content: userMessage }
+        { role: "system", content: systemPrompt },
+        { role: "user", content: promptInput }
       ],
       max_tokens: 512,
       temperature: 0.8,
@@ -349,14 +335,7 @@ User message: "${userMessage}"`;
       aiResponse = groqRes.data.choices[0].message.content.trim();
     } catch (err) {
       console.error("Groq API error:", err.response?.data || err.message);
-           // Fallback to simple medical response
-           if (lang === 'hi') {
-             aiResponse = "हैलो! मुझे आपकी समस्या समझ आई है। कृपया अपने लक्षणों के बारे में थोड़ा और बताएं ताकि मैं आपकी बेहतर मदद कर सकूं। अगर दर्द ज्यादा है तो डॉक्टर से जरूर मिलें।";
-           } else if (lang === 'mr') {
-             aiResponse = "नमस्कार! मला तुमची समस्या समजली आहे. कृपया तुमच्या लक्षणांबद्दल थोडे अधिक सांगा जेणेकरून मी तुम्हाला चांगली सल्ला देऊ शकेन. जर वेदना जास्त असेल तर डॉक्टरांशी संपर्क साधा.";
-           } else {
-             aiResponse = "Hello! I understand your concern. Please tell me a bit more about your symptoms so I can help you better. If the pain is severe, please consult a doctor.";
-           }
+      aiResponse = "I'm having trouble connecting to the AI service right now. Please try again in a moment.";
     }
 
     console.log(`🌍 AI Response in ${lang}: "${aiResponse}"`);
@@ -765,118 +744,214 @@ Guidelines:
 }
 
 // Text-to-Speech endpoint with multiple TTS services for better regional pronunciation
-// Hugging Face TTS for grammatical accuracy
-async function huggingFaceTTS(text, language, gender = 'male') {
-  if (!hfTTS) {
-    console.log('⚠️ Hugging Face TTS not available');
-    return null;
+app.post("/tts", async (req, res) => {
+  const { text, language = "en", gender = "male" } = req.body;
+  
+  if (!text) {
+    return res.status(400).json({ error: "Text is required" });
   }
+
+  console.log(`🎤 Processing TTS for ${language} - trying multiple services`);
+  
+  // For all languages, use Google TTS with the new API key
+  console.log(`🎤 Using Google TTS for ${language} - professional pronunciation`);
   
   try {
-    console.log(`🤖 Using Hugging Face TTS for ${language} - grammatical accuracy`);
+    const response = await axios.post(
+      `https://texttospeech.googleapis.com/v1/text:synthesize?key=AIzaSyD207LLJ8x6c045v5_u4rtI7vqGFeXrKHA`,
+      {
+        input: { text: text },
+        voice: {
+          languageCode: language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-US",
+          name: language === "hi" ? "hi-IN-Wavenet-A" : language === "mr" ? "mr-IN-Wavenet-A" : "en-US-Wavenet-A",
+          ssmlGender: gender === "male" ? "MALE" : "FEMALE"
+        },
+        audioConfig: {
+          audioEncoding: "MP3",
+          speakingRate: 0.9,
+          pitch: 0.0
+        }
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    if (response.data && response.data.audioContent) {
+      console.log(`✅ Google TTS successful for ${language} - professional speech`);
+      const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': audioBuffer.length,
+      });
+      res.send(audioBuffer);
+      return;
+    }
+  } catch (googleError) {
+    console.error("Google TTS error:", googleError.response?.data?.error?.message || googleError.message);
+    console.log("🔄 Falling back to browser TTS");
     
-    // Preprocess text for better grammatical pronunciation
-    let processedText = text;
-    if (language === "hi" || language === "mr") {
-      // Clean and normalize Devanagari text
-      processedText = text
-        .replace(/[^\u0900-\u097F\s.,!?]/g, '') // Keep only Devanagari characters
-        .replace(/\s+/g, ' ') // Normalize whitespace
-        .trim();
+    // Fallback to browser TTS
+    return res.json({
+      message: "Use browser TTS",
+      useBrowserTTS: true,
+      language: language,
+      text: text,
+      fallback: "browser_tts",
+      instructions: "Browser TTS provides basic text-to-speech"
+    });
+  }
+    
+    // Fallback to Google TTS
+    try {
+      const response = await axios.post(
+        `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_TTS_API_KEY || 'AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY'}`,
+        {
+          input: { text: text },
+          voice: {
+            languageCode: language === "hi" ? "hi-IN" : "mr-IN",
+            name: language === "hi" ? "hi-IN-Wavenet-A" : "mr-IN-Wavenet-A",
+            ssmlGender: gender === "male" ? "MALE" : "FEMALE"
+          },
+          audioConfig: {
+            audioEncoding: "MP3",
+            speakingRate: 0.8,
+            pitch: -2.0
+          }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
+        }
+      );
+
+      if (response.data && response.data.audioContent) {
+        const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+        res.set({
+          'Content-Type': 'audio/mpeg',
+          'Content-Length': audioBuffer.length,
+        });
+        res.send(audioBuffer);
+        return;
+      }
+    } catch (googleError) {
+      console.error("Google TTS error:", googleError.message);
+      console.log("🔄 Falling back to browser TTS for regional languages");
     }
     
-    // Use Hugging Face TTS with grammatical focus
-    const result = await hfTTS(processedText, {
-      speaker_embeddings: gender === 'male' ? 'male_speaker' : 'female_speaker',
-      return_tensors: 'pt'
+    // Final fallback to browser TTS for regional languages
+    return res.json({
+      message: "Use browser TTS for regional languages",
+      useBrowserTTS: true,
+      language: language,
+      text: text,
+      fallback: "browser_tts",
+      instructions: "Browser TTS provides better regional language support"
     });
+  }
+
+  // For other languages, use Google TTS
+  try {
+    const response = await axios.post(
+      `https://texttospeech.googleapis.com/v1/text:synthesize?key=${process.env.GOOGLE_TTS_API_KEY || 'AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY'}`,
+      {
+        input: { text: text },
+        voice: {
+          languageCode: "en-US",
+          name: "en-US-Wavenet-A",
+          ssmlGender: gender === "male" ? "MALE" : "FEMALE"
+        },
+        audioConfig: {
+          audioEncoding: "MP3",
+          speakingRate: 0.9,
+          pitch: 0.0
+        }
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        timeout: 15000
+      }
+    );
+
+    if (response.data && response.data.audioContent) {
+      const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+      res.set({
+        'Content-Type': 'audio/mpeg',
+        'Content-Length': audioBuffer.length,
+      });
+      res.send(audioBuffer);
+      return;
+    }
+  } catch (googleError) {
+    console.error("Google Cloud TTS error:", googleError.message);
+    console.log("🔄 Falling back to browser TTS");
     
-    console.log(`✅ Hugging Face TTS successful for ${language} - grammatical speech`);
-    return result.audio;
+    // Fallback to browser TTS
+    return res.json({
+      message: "Use browser TTS",
+      useBrowserTTS: true,
+      language: language,
+      text: text
+    });
+  }
+
+  try {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY || "AIzaSyAm1o5Gtq4F3erw47-mDFjFCSOe3oQU_yY";
+
+    // Google TTS Voice mapping for different languages and genders
+    // Using WaveNet voices for better quality and pronunciation
+    const voiceMap = {
+      'en-male': { languageCode: 'en-IN', name: 'en-IN-Wavenet-B' },      // English Male - WaveNet
+      'en-female': { languageCode: 'en-IN', name: 'en-IN-Wavenet-A' },   // English Female - WaveNet
+      'hi-male': { languageCode: 'hi-IN', name: 'hi-IN-Wavenet-A' },    // Hindi Male - WaveNet
+      'hi-female': { languageCode: 'hi-IN', name: 'hi-IN-Wavenet-B' },  // Hindi Female - WaveNet
+      'mr-male': { languageCode: 'mr-IN', name: 'mr-IN-Wavenet-A' },     // Marathi Male - WaveNet
+      'mr-female': { languageCode: 'mr-IN', name: 'mr-IN-Wavenet-B' }   // Marathi Female - WaveNet
+    };
+
+    const voiceKey = `${language}-${gender}`;
+    const selectedVoice = voiceMap[voiceKey] || voiceMap['en-male'];
+
+    // Make request to Google TTS API
+    const response = await axios.post(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`, {
+      input: { text },
+      voice: selectedVoice,
+      audioConfig: { 
+        audioEncoding: "MP3",
+        speakingRate: language === 'hi' || language === 'mr' ? 0.8 : 0.9,  // Slower for Hindi/Marathi
+        pitch: language === 'hi' || language === 'mr' ? -2.0 : 0.0,  // Lower pitch for Indian languages
+        volumeGainDb: 0.0,
+        effectsProfileId: ["telephony-class-application"]  // Better for medical/telephony use
+      }
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (response.data.audioContent) {
+      // Set appropriate headers for audio streaming
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Content-Disposition', 'inline; filename="speech.mp3"');
+      res.setHeader('Cache-Control', 'no-cache');
+      
+      // Convert base64 to buffer and send
+      const audioBuffer = Buffer.from(response.data.audioContent, 'base64');
+      res.send(audioBuffer);
+    } else {
+      throw new Error('No audio content received from Google TTS');
+    }
     
   } catch (error) {
-    console.log(`⚠️ Hugging Face TTS error: ${error.message}`);
-    return null;
-  }
-}
-
-// Simple working TTS endpoint (from medical-voice-assistant)
-app.post("/tts-simple", async (req, res) => {
-  try {
-    const { text, language = "en", gender = "male" } = req.body;
-    
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: "Text is required" });
-    }
-
-    console.log(`🎤 Processing TTS for ${language} - using working Google TTS API`);
-
-    const voice = selectVoice(language);
-    const body = {
-      input: { text },
-      voice: { languageCode: voice.languageCode, name: voice.name },
-      audioConfig: { audioEncoding: "MP3", speakingRate: 1.0 }
-    };
-
-    const response = await fetch(GOOGLE_TTS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("Google TTS API error:", error);
-      return res.status(500).json({ error: "TTS request failed", details: error });
-    }
-
-    const data = await response.json();
-    console.log(`✅ Google TTS successful for ${language} - working pronunciation`);
-    
-    res.json({ audioContent: data.audioContent });
-  } catch (err) {
-    console.error("TTS error:", err);
-    res.status(500).json({ error: "Server error", details: err.message });
-  }
-});
-
-// Main TTS endpoint - EXACT copy from working medical-voice-assistant
-app.post("/tts", async (req, res) => {
-  try {
-    const { text, language = "en", gender = "male" } = req.body;
-    
-    if (!text || !text.trim()) {
-      return res.status(400).json({ error: "Text is required" });
-    }
-
-    console.log(`🎤 Processing TTS for ${language} - using EXACT working code from medical-voice-assistant`);
-
-    const voice = selectVoice(language);
-    const body = {
-      input: { text },
-      voice: { languageCode: voice.languageCode, name: voice.name },
-      audioConfig: { audioEncoding: "MP3", speakingRate: 1.0 }
-    };
-
-    const response = await fetch(GOOGLE_TTS_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const error = await response.text();
-      console.error("Google TTS API error:", error);
-      return res.status(500).json({ error: "TTS request failed", details: error });
-    }
-
-    const data = await response.json();
-    console.log(`✅ Google TTS successful for ${language} - EXACT working pronunciation`);
-    
-    res.json({ audioContent: data.audioContent });
-  } catch (err) {
-    console.error("TTS error:", err);
-    res.status(500).json({ error: "Server error", details: err.message });
+    console.error("Google TTS error:", error.response?.data || error.message);
+    res.status(500).json({ error: "Text-to-speech generation failed" });
   }
 });
 

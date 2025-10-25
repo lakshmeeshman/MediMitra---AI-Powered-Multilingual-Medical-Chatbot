@@ -1,0 +1,5 @@
+{
+  "fallback": "browser_tts",
+  "instructions": "Browser TTS provides better regional language support",
+  "message": "Use browser TTS for regional languages"
+}

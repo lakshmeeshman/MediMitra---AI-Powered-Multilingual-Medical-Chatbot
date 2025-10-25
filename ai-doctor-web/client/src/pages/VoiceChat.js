@@ -1,891 +1,672 @@
-// pages/VoiceChat.js
-import React, { useState, useEffect, useRef } from "react";
-import { useNavigate } from "react-router-dom";
-import { auth, db } from "../firebase";
-import { collection, addDoc, query, orderBy, where, getDocs, serverTimestamp } from "firebase/firestore";
-import "../index.css";
+import React, { useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { auth } from '../firebase';
+import { signOut } from 'firebase/auth';
+import './AvatarChat.css';
 
-function VoiceChat() {
-  const [chat, setChat] = useState([]);
-  const [input, setInput] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [language, setLanguage] = useState("en");
-  const [listening, setListening] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
-  const [paused, setPaused] = useState(false);
-  const [speakQueue, setSpeakQueue] = useState([]);
-  const [chunkDurations, setChunkDurations] = useState([]);
-  const [currentChunkIndex, setCurrentChunkIndex] = useState(0);
-  const [elapsedMs, setElapsedMs] = useState(0);
-  const [totalMs, setTotalMs] = useState(0);
-  const [currentAudio, setCurrentAudio] = useState(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [chatHistory, setChatHistory] = useState([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [currentSessionId, setCurrentSessionId] = useState(null);
-  const chatRef = useRef();
-  const synthRef = useRef(window.speechSynthesis);
-  const [availableVoices, setAvailableVoices] = useState([]);
-  const recognitionRef = useRef(null);
-  const progressTimerRef = useRef(null);
-  const [audioContextInitialized, setAudioContextInitialized] = useState(false);
+const VoiceChat = () => {
   const navigate = useNavigate();
+  const [messages, setMessages] = useState([]);
+  const [inputMessage, setInputMessage] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [language, setLanguage] = useState('en');
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef(null);
 
-  // Initialize audio context on first user interaction
-  const initializeAudioContext = () => {
-    if (!audioContextInitialized) {
-      console.log('🎵 Initializing audio context for first time');
-      setAudioContextInitialized(true);
-    }
-  };
+  // EXACT TTS functionality from medical-voice-assistant
+  const TTSPlayer = ({ text, lang = "en" }) => {
+    const [ttsLoading, setTtsLoading] = useState(false);
 
-  // Translation dictionary for UI elements
-  const translations = {
-    en: {
-      placeholder: "Or type your message here...",
-      send: "Send",
-      newChat: "New Chat",
-      chatHistory: "Chat History",
-      clearChat: "Clear Chat",
-      logout: "Logout",
-      loading: "AI Doctor is thinking...",
-      error: "Error connecting to AI Doctor. Please try again.",
-      welcomeTitle: "Hello! I'm your AI Doctor",
-      welcomeSubtitle: "I'm here to help you with your health concerns. Click the microphone button and speak your symptoms or questions.",
-      suggestion1: "I have a headache",
-      suggestion2: "What are the symptoms of fever?",
-      suggestion3: "How to treat a cold?",
-      quickQuestion1: "⏰ Medication Duration",
-      quickQuestion2: "🏥 When to See Doctor",
-      quickQuestion3: "⚠️ Side Effects",
-      quickQuestion4: "ℹ️ More Info",
-      typingIndicator: "AI Doctor is processing...",
-      switchToText: "💬 Switch to Text",
-      pause: "Pause",
-      resume: "Resume",
-      mic: "🎤",
-      listening: "Listening..."
-    },
-    hi: {
-      placeholder: "या यहां अपना संदेश टाइप करें...",
-      send: "भेजें",
-      newChat: "नई चैट",
-      chatHistory: "चैट इतिहास",
-      clearChat: "चैट साफ़ करें",
-      logout: "लॉगआउट",
-      loading: "AI डॉक्टर सोच रहे हैं...",
-      error: "AI डॉक्टर से कनेक्ट करने में त्रुटि। कृपया पुनः प्रयास करें।",
-      welcomeTitle: "नमस्ते! मैं आपका AI डॉक्टर हूं",
-      welcomeSubtitle: "मैं आपकी स्वास्थ्य संबंधी चिंताओं में मदद करने के लिए यहां हूं। माइक्रोफोन बटन पर क्लिक करें और अपने लक्षण या प्रश्न बोलें।",
-      suggestion1: "मुझे सिरदर्द है",
-      suggestion2: "बुखार के लक्षण क्या हैं?",
-      suggestion3: "सर्दी का इलाज कैसे करें?",
-      quickQuestion1: "⏰ दवा की अवधि",
-      quickQuestion2: "🏥 डॉक्टर से कब मिलें",
-      quickQuestion3: "⚠️ साइड इफेक्ट्स",
-      quickQuestion4: "ℹ️ अधिक जानकारी",
-      typingIndicator: "AI डॉक्टर प्रोसेस कर रहे हैं...",
-      switchToText: "💬 टेक्स्ट पर स्विच करें",
-      pause: "रोकें",
-      resume: "जारी रखें",
-      mic: "🎤",
-      listening: "सुन रहे हैं..."
-    },
-    mr: {
-      placeholder: "किंवा येथे तुमचा संदेश टाइप करा...",
-      send: "पाठवा",
-      newChat: "नवीन चॅट",
-      chatHistory: "चॅट इतिहास",
-      clearChat: "चॅट साफ करा",
-      logout: "लॉगआउट",
-      loading: "AI डॉक्टर विचार करत आहेत...",
-      error: "AI डॉक्टरशी कनेक्ट करताना त्रुटी। कृपया पुन्हा प्रयत्न करा।",
-      welcomeTitle: "नमस्कार! मी तुमचा AI डॉक्टर आहे",
-      welcomeSubtitle: "मी तुमच्या आरोग्य संबंधी काळजीत मदत करण्यासाठी येथे आहे. मायक्रोफोन बटणावर क्लिक करा आणि तुमचे लक्षण किंवा प्रश्न बोला.",
-      suggestion1: "मला डोकेदुखी आहे",
-      suggestion2: "तापाचे लक्षण काय आहेत?",
-      suggestion3: "सर्दीचा उपचार कसा करावा?",
-      quickQuestion1: "⏰ औषधाचा कालावधी",
-      quickQuestion2: "🏥 डॉक्टरांना कधी भेटावे",
-      quickQuestion3: "⚠️ दुष्परिणाम",
-      quickQuestion4: "ℹ️ अधिक माहिती",
-      typingIndicator: "AI डॉक्टर प्रक्रिया करत आहेत...",
-      switchToText: "💬 मजकूरावर स्विच करा",
-      pause: "थांबवा",
-      resume: "पुन्हा सुरू करा",
-      mic: "🎤",
-      listening: "ऐकत आहेत..."
-    }
-  };
-
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      if (!user) {
-        navigate("/");
-      }
-    });
-
-    return () => unsubscribe();
-  }, [navigate]);
-
-  // Ensure we start with current chat view
-  useEffect(() => {
-    setShowHistory(false);
-    setCurrentSessionId(Date.now()); // Create a new session ID for current chat
-  }, []);
-
-  // Scroll chat into view
-  useEffect(() => {
-    chatRef.current?.scrollTo(0, chatRef.current.scrollHeight);
-  }, [chat]);
-
-  // Load and cache voices (voices may arrive asynchronously)
-  useEffect(() => {
-    const loadVoices = () => {
-      const voices = synthRef.current.getVoices();
-      if (voices && voices.length) setAvailableVoices(voices);
-    };
-    loadVoices();
-    if (typeof window !== "undefined") {
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    }
-  }, []);
-
-  const selectBestVoice = (targetLang, preferredGender) => {
-    if (!availableVoices || availableVoices.length === 0) return null;
-
-    const langMap = {
-      en: ["en-IN", "en-US", "en-GB"],
-      hi: ["hi-IN"],
-      mr: ["mr-IN", "hi-IN"],
-    };
-    const preferredLangs = langMap[targetLang] || langMap.en;
-
-  // Enhanced voice selection for Indian languages
-  const scored = availableVoices.map(v => {
-    const langScore = preferredLangs.findIndex(code => (v.lang || "").toLowerCase().startsWith(code.toLowerCase()));
-    const genderHint = (v.name || "").toLowerCase();
-    const genderScore = preferredGender === "female"
-      ? (genderHint.includes("female") || genderHint.includes("woman") ? 0 : 1)
-      : (genderHint.includes("male") || genderHint.includes("man") ? 0 : 1);
-    
-    // Enhanced quality scoring for Indian languages
-    let qualityScore = 1;
-    if (genderHint.includes("neural") || genderHint.includes("google") || genderHint.includes("natural")) {
-      qualityScore = 0;
-    } else if (genderHint.includes("india") || genderHint.includes("indian")) {
-      qualityScore = 0.5; // Prefer Indian voices
-    } else if (genderHint.includes("hindi") || genderHint.includes("marathi")) {
-      qualityScore = 0.3; // Prefer language-specific voices
-    }
-    
-    return { v, score: [langScore === -1 ? 99 : langScore, genderScore, qualityScore] };
-  });
-
-    scored.sort((a, b) => {
-      for (let i = 0; i < a.score.length; i++) {
-        if (a.score[i] !== b.score[i]) return a.score[i] - b.score[i];
-      }
-      return 0;
-    });
-
-    return (scored[0] && scored[0].score[0] !== 99) ? scored[0].v : availableVoices[0];
-  };
-
-  const speak = async (text, lang = language) => {
-    // Initialize audio context on first interaction
-    initializeAudioContext();
-    
-    // Stop mic while speaking to avoid feedback, ignore errors
-    if (listening) {
-      try { recognitionRef.current?.stop(); } catch (_) {}
-      setListening(false);
-    }
-
-    stopSpeaking(); // clear previous speech
-
-    // Normalize text: strip markdown and unsupported symbols
-    const cleaned = (text || "")
-      .replace(/\*\*(.*?)\*\*/g, "$1")
-      .replace(/\*(.*?)\*/g, "$1")
-      .replace(/[`_~]/g, "")
-      .replace(/[^\p{L}\p{N}\s.,!?%:;()-]/gu, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-
-    if (!cleaned) return;
-
-    try {
-      setSpeaking(true);
-      setPaused(false);
-
-      // Use server Google Cloud TTS for all languages
-      console.log(`🎤 Using Server Google Cloud TTS for ${lang} - professional pronunciation`);
+    async function handleSpeak() {
+      if (!text) return;
       
+      setTtsLoading(true);
       try {
-        const response = await fetch('http://localhost:5051/tts', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            text: cleaned,
-            language: lang,
-            gender: 'male'
-          })
+        const res = await fetch('http://localhost:5051/tts', {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, language: lang })
         });
-
-        if (response.ok) {
-          const audioBlob = await response.blob();
-          console.log('🎵 Audio blob received, size:', audioBlob.size, 'bytes');
-          const audioUrl = URL.createObjectURL(audioBlob);
-          console.log('🎵 Audio URL created:', audioUrl);
-          const audio = new Audio(audioUrl);
-          console.log('🎵 Audio object created');
-          
-          audio.onloadedmetadata = () => {
-            console.log('🎵 Audio metadata loaded, duration:', audio.duration, 'seconds');
-            setTotalMs(audio.duration * 1000);
-            setElapsedMs(0);
-            setCurrentAudio(audio);
-          };
-
-          audio.ontimeupdate = () => {
-            setElapsedMs(audio.currentTime * 1000);
-          };
-
-          audio.onended = () => {
-            console.log('✅ Audio playback completed');
-            setSpeaking(false);
-            setPaused(false);
-            setElapsedMs(0);
-            setTotalMs(0);
-            setCurrentAudio(null);
-            URL.revokeObjectURL(audioUrl);
-          };
-          
-          audio.onerror = (error) => {
-            console.error('❌ Audio playback error:', error);
-            setSpeaking(false);
-            setPaused(false);
-            URL.revokeObjectURL(audioUrl);
-            console.log('❌ Server TTS audio playback failed, but NOT falling back to browser TTS');
-          };
-          
-          console.log('🎵 Starting audio playback...');
-          
-          // Simple, direct audio playback
-          try {
-            await audio.play();
-            console.log('✅ Audio started playing successfully');
-          } catch (playError) {
-            console.error('❌ Audio play failed:', playError);
-            setSpeaking(false);
-            setPaused(false);
-            URL.revokeObjectURL(audioUrl);
-          }
+        const data = await res.json();
+        if (data.audioContent) {
+          const audio = new Audio("data:audio/mp3;base64," + data.audioContent);
+          audio.play();
         } else {
-          console.log('❌ Server TTS failed, but NOT falling back to browser TTS');
-          setSpeaking(false);
-          setPaused(false);
+          console.error("TTS Error:", data.error || "No audio returned");
         }
-      } catch (error) {
-        console.error('❌ TTS request failed:', error);
-        console.log('❌ Server TTS request failed, but NOT falling back to browser TTS');
-        setSpeaking(false);
-        setPaused(false);
+      } catch (err) {
+        console.error("TTS Request failed:", err.message);
+      } finally {
+        setTtsLoading(false);
       }
-      return;
-
-
-    } catch (error) {
-      console.error('TTS Error:', error);
-      setSpeaking(false);
-      setPaused(false);
-      console.log('❌ TTS Error occurred, but NOT falling back to browser TTS');
     }
+
+    return (
+      <div style={{ marginTop: "8px" }}>
+        <button 
+          onClick={handleSpeak} 
+          disabled={ttsLoading || !text}
+          className="tts-button"
+        >
+          {ttsLoading ? "🔊 Speaking..." : "🔊 Listen"}
+        </button>
+      </div>
+    );
   };
 
-  // Enhanced Browser TTS for regional languages with proper voice selection
-  const fallbackSpeak = (text) => {
-    const utterance = new SpeechSynthesisUtterance(text);
-    
-    // Get all available voices
-    const voices = window.speechSynthesis.getVoices();
-    console.log('Available voices:', voices.map(v => ({ name: v.name, lang: v.lang })));
-    
-    // Set language codes for better regional pronunciation
-    if (language === "hi") {
-      utterance.lang = "hi-IN"; // Hindi (India)
-      // Try to find Hindi voice
-      const hindiVoice = voices.find(v => 
-        v.lang.startsWith('hi') || 
-        v.name.toLowerCase().includes('hindi') ||
-        v.name.toLowerCase().includes('india')
-      );
-      if (hindiVoice) {
-        utterance.voice = hindiVoice;
-        console.log('Using Hindi voice:', hindiVoice.name);
-      }
-    } else if (language === "mr") {
-      utterance.lang = "mr-IN"; // Marathi (India)
-      // Try to find Marathi voice
-      const marathiVoice = voices.find(v => 
-        v.lang.startsWith('mr') || 
-        v.name.toLowerCase().includes('marathi') ||
-        v.name.toLowerCase().includes('india')
-      );
-      if (marathiVoice) {
-        utterance.voice = marathiVoice;
-        console.log('Using Marathi voice:', marathiVoice.name);
-      }
-    } else {
-      utterance.lang = "en-IN"; // English (India)
-    }
-    
-    // Optimized settings for regional languages
-    utterance.pitch = language === "hi" || language === "mr" ? 0.9 : 1.0; // Slightly lower pitch
-    utterance.rate = language === "hi" || language === "mr" ? 0.8 : 0.9; // Slower rate for better pronunciation
-    utterance.volume = 1.0;
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim()) return;
 
-    // If no specific voice found, use the best available
-    if (!utterance.voice) {
-      const chosen = selectBestVoice(language, "male");
-      if (chosen) utterance.voice = chosen;
-    }
+    const userMessage = { text: inputMessage, isBot: false, lang: language };
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage("");
+    setLoading(true);
 
-    utterance.onend = () => {
-      setSpeaking(false);
-      setPaused(false);
-    };
-
-    utterance.onerror = () => {
-      setSpeaking(false);
-      setPaused(false);
-    };
-
-    synthRef.current.speak(utterance);
-    setSpeaking(true);
-    setPaused(false);
-  };
-
-  const seekToMs = (targetMs) => {
-    if (currentAudio && totalMs > 0) {
-      const clamped = Math.max(0, Math.min(totalMs, targetMs));
-      currentAudio.currentTime = clamped / 1000;
-      setElapsedMs(clamped);
-    } else if (!speakQueue.length || totalMs <= 0) return;
-    else {
-      // Fallback for browser TTS
-      const clamped = Math.max(0, Math.min(totalMs, targetMs));
-      let acc = 0;
-      let targetIndex = 0;
-      for (let i = 0; i < chunkDurations.length; i++) {
-        if (acc + chunkDurations[i] >= clamped) { targetIndex = i; break; }
-        acc += chunkDurations[i];
-      }
-      const remaining = speakQueue.slice(targetIndex).join(" ");
-      stopSpeaking();
-      setTimeout(() => speak(remaining), 50);
-    }
-  };
-
-  const replay3s = () => {
-    console.log('⏪ Replaying 3 seconds...', { elapsedMs, totalMs });
-    if (currentAudio && totalMs > 0) {
-      const newTime = Math.max(0, elapsedMs - 3000);
-      currentAudio.currentTime = newTime / 1000;
-      setElapsedMs(newTime);
-      console.log('✅ Audio rewinded to:', newTime);
-    } else {
-      console.log('❌ No audio to rewind');
-    }
-  };
-
-  const skip5s = () => {
-    console.log('⏩ Skipping 5 seconds...', { elapsedMs, totalMs });
-    if (currentAudio && totalMs > 0) {
-      const newTime = Math.min(totalMs, elapsedMs + 5000);
-      currentAudio.currentTime = newTime / 1000;
-      setElapsedMs(newTime);
-      console.log('✅ Audio forwarded to:', newTime);
-    } else {
-      console.log('❌ No audio to skip');
-    }
-  };
-
-  const stopSpeaking = () => {
-    if (currentAudio) {
-      currentAudio.pause();
-      currentAudio.currentTime = 0;
-      setCurrentAudio(null);
-    }
-    synthRef.current.cancel();
-    setSpeaking(false);
-    setPaused(false);
-    setSpeakQueue([]);
-    setChunkDurations([]);
-    setCurrentChunkIndex(0);
-    setElapsedMs(0);
-    setTotalMs(0);
-    if (progressTimerRef.current) {
-      clearInterval(progressTimerRef.current);
-      progressTimerRef.current = null;
-    }
-  };
-
-  const pauseSpeaking = () => {
-    console.log('⏸️ Pausing speech...', { currentAudio: !!currentAudio, paused, speaking });
-    if (currentAudio && !currentAudio.paused) {
-      currentAudio.pause();
-      setPaused(true);
-      console.log('✅ Audio paused');
-    } else if (speaking && !paused) {
-      synthRef.current.pause();
-      setPaused(true);
-      console.log('✅ Speech synthesis paused');
-    }
-  };
-
-  const resumeSpeaking = () => {
-    console.log('▶️ Resuming speech...', { currentAudio: !!currentAudio, paused, speaking });
-    if (currentAudio && currentAudio.paused) {
-      currentAudio.play();
-      setPaused(false);
-      console.log('✅ Audio resumed');
-    } else if (speaking && paused) {
-      synthRef.current.resume();
-      setPaused(false);
-      console.log('✅ Speech synthesis resumed');
-    }
-  };
-
-  const handleLogout = async () => {
-    stopSpeaking();
     try {
-      await auth.signOut();
-      navigate("/");
+      const response = await fetch('http://localhost:5051/chat', {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: inputMessage, lang: language })
+      });
+
+      const data = await response.json();
+      if (data.reply || data.response) {
+        setMessages(prev => [...prev, { text: data.reply || data.response, isBot: true, lang: language }]);
+      } else {
+        setMessages(prev => [...prev, { text: "Sorry, I couldn't process your request.", isBot: true, lang: language }]);
+      }
     } catch (error) {
-      console.error("Logout error:", error);
+      setMessages(prev => [...prev, { text: "Error: Could not connect to the assistant.", isBot: true, lang: language }]);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleMicInput = () => {
-    if (!window.SpeechRecognition && !window.webkitSpeechRecognition) {
-      alert("Speech Recognition not supported in this browser.");
-      return;
+  const handleKeyPress = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
     }
+  };
 
-    if (listening) {
-      recognitionRef.current?.stop();
-      setListening(false);
+  const startListening = () => {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      alert('Speech recognition is not supported in this browser. Please use Chrome or Edge.');
       return;
     }
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
 
-    recognition.lang = language === "hi" ? "hi-IN" : language === "mr" ? "mr-IN" : "en-IN";
+    // Set language based on selection
+    const langMap = {
+      'en': 'en-US',
+      'hi': 'hi-IN',
+      'mr': 'mr-IN'
+    };
+    
+    recognition.lang = langMap[language] || 'en-US';
+    recognition.continuous = false;
     recognition.interimResults = false;
-    recognition.maxAlternatives = 1;
 
-    recognition.start();
-    setListening(true);
+    recognition.onstart = () => {
+      setIsListening(true);
+    };
 
     recognition.onresult = (event) => {
       const transcript = event.results[0][0].transcript;
-      setInput(transcript);
-      setListening(false);
+      setInputMessage(transcript);
+      setIsListening(false);
     };
 
     recognition.onerror = (event) => {
-      console.error("Speech recognition error:", event.error);
-      setListening(false);
+      console.error('Speech recognition error:', event.error);
+      setIsListening(false);
+      alert('Speech recognition error: ' + event.error);
     };
 
     recognition.onend = () => {
-      setListening(false);
+      setIsListening(false);
     };
 
     recognitionRef.current = recognition;
+    recognition.start();
   };
 
+  const stopListening = () => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
+    }
+    setIsListening(false);
+  };
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    const userMessage = input.trim();
-    setInput("");
-    setLoading(true);
-
+  const handleLogout = async () => {
     try {
-      // Save user message immediately
-      await saveMessageToFirebase("user", userMessage);
-      
-      // Get AI response with translation
-      const res = await fetch(`http://localhost:5051/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: userMessage, language }),
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        await saveMessageToFirebase("ai", data.reply);
-        speak(data.reply, language); // Speak the AI response
-      } else {
-        const errorMsg = translations[language]?.error || translations.en.error;
-        await saveMessageToFirebase("ai", errorMsg);
-        speak(errorMsg, language);
-      }
+      await signOut(auth);
+      navigate('/login');
     } catch (error) {
-      console.error("Error sending message:", error);
-      const errorMsg = translations[language]?.error || translations.en.error;
-      await saveMessageToFirebase("ai", errorMsg);
-      speak(errorMsg, language);
-    } finally {
-      setLoading(false);
+      console.error("Logout error:", error);
     }
   };
 
-  const saveMessageToFirebase = async (role, text) => {
-    // Always render locally so the user sees both text and voice instantly
-    const newMessage = {
-      id: Date.now(),
-      role,
-      text,
-      time: new Date().toLocaleTimeString()
-    };
-    setChat(prev => [...prev, newMessage]);
-
-    if (!auth.currentUser) return; // Optional persistence only when logged in
-
-    try {
-      await addDoc(collection(db, "chatMessages"), {
-        userId: auth.currentUser.uid,
-        role,
-        text,
-        timestamp: serverTimestamp(),
-        chatSession: currentSessionId,
-        language
-      });
-    } catch (error) {
-      console.error("Error saving message:", error);
+  const translations = {
+    en: {
+      title: "🩺 Medimitra AI Medical Assistant",
+      subtitle: "Advanced AI-powered medical consultation with voice interaction",
+      languageSelect: "Select Language:",
+      inputPlaceholder: "Describe your symptoms or ask a medical question...",
+      tip: "💡 Tip: You can speak in any language and the AI will understand!",
+      speak: "🎤 Speak",
+      stop: "🛑 Stop",
+      send: "Send",
+      sending: "Sending...",
+      thinking: "🤖 AI is analyzing your symptoms...",
+      disclaimer: "⚠️ This AI provides general medical information only. Always consult a qualified doctor for medical advice.",
+      logout: "Logout"
+    },
+    hi: {
+      title: "🩺 मेडिमित्रा AI चिकित्सा सहायक",
+      subtitle: "आवाज संवाद के साथ उन्नत AI-संचालित चिकित्सा परामर्श",
+      languageSelect: "भाषा चुनें:",
+      inputPlaceholder: "अपने लक्षणों का वर्णन करें या चिकित्सा प्रश्न पूछें...",
+      tip: "💡 सुझाव: आप किसी भी भाषा में बोल सकते हैं और AI समझ जाएगा!",
+      speak: "🎤 बोलें",
+      stop: "🛑 रोकें",
+      send: "भेजें",
+      sending: "भेज रहे हैं...",
+      thinking: "🤖 AI आपके लक्षणों का विश्लेषण कर रहा है...",
+      disclaimer: "⚠️ यह AI केवल सामान्य चिकित्सा जानकारी प्रदान करता है। चिकित्सा सलाह के लिए हमेशा योग्य डॉक्टर से परामर्श लें।",
+      logout: "लॉगआउट"
+    },
+    mr: {
+      title: "🩺 मेडिमित्रा AI वैद्यकीय सहायक",
+      subtitle: "आवाज संवादासह उन्नत AI-चालित वैद्यकीय सल्लामसलत",
+      languageSelect: "भाषा निवडा:",
+      inputPlaceholder: "आपल्या लक्षणांचे वर्णन करा किंवा वैद्यकीय प्रश्न विचारा...",
+      tip: "💡 टिप: तुम्ही कोणत्याही भाषेत बोलू शकता आणि AI समजेल!",
+      speak: "🎤 बोला",
+      stop: "🛑 थांबवा",
+      send: "पाठवा",
+      sending: "पाठवत आहे...",
+      thinking: "🤖 AI तुमच्या लक्षणांचे विश्लेषण करत आहे...",
+      disclaimer: "⚠️ हा AI फक्त सामान्य वैद्यकीय माहिती देतो. वैद्यकीय सल्ल्यासाठी नेहमी पात्र डॉक्टरांशी सल्लामसलत करा.",
+      logout: "लॉगआउट"
     }
   };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
-  };
-
-  const formatReply = (text) =>
-    text
-      .replace(/\n/g, "<br>")
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      .replace(/\*(.*?)\*/g, "<em>$1</em>");
-
-  const clearChat = () => {
-    stopSpeaking();
-    setChat([]);
-    setCurrentSessionId(Date.now());
-  };
-
-  const loadChatHistory = async () => {
-    if (!auth.currentUser) return;
-    
-    setHistoryLoading(true);
-    try {
-      const q = query(
-        collection(db, "chatMessages"),
-        where("userId", "==", auth.currentUser.uid),
-        orderBy("timestamp", "desc")
-      );
-      
-      const querySnapshot = await getDocs(q);
-      const sessions = {};
-      
-      querySnapshot.forEach((doc) => {
-        const data = doc.data();
-        const sessionId = data.chatSession;
-        
-        if (!sessions[sessionId]) {
-          sessions[sessionId] = {
-            id: sessionId,
-            messages: [],
-            lastMessage: data.timestamp,
-            createdAt: data.timestamp
-          };
-        }
-        sessions[sessionId].messages.push({
-          id: doc.id,
-          role: data.role,
-          text: data.text,
-          time: data.timestamp?.toDate?.()?.toLocaleTimeString() || new Date().toLocaleTimeString(),
-          timestamp: data.timestamp
-        });
-      });
-      
-      // Sort messages within each session by timestamp (oldest first)
-      Object.values(sessions).forEach(session => {
-        session.messages.sort((a, b) => {
-          const timeA = a.timestamp?.toDate?.() || new Date(0);
-          const timeB = b.timestamp?.toDate?.() || new Date(0);
-          return timeA - timeB;
-        });
-      });
-      
-      // Sort sessions by most recent first
-      const sortedSessions = Object.values(sessions).sort((a, b) => {
-        const timeA = a.lastMessage?.toDate?.() || new Date(0);
-        const timeB = b.lastMessage?.toDate?.() || new Date(0);
-        return timeB - timeA;
-      });
-      
-      setChatHistory(sortedSessions);
-    } catch (error) {
-      console.error("Error loading chat history:", error);
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
 
   const t = translations[language] || translations.en;
 
   return (
-    <div className="chat-container voice-chat" onClick={initializeAudioContext}>
-      {/* Header */}
-      <div className="chat-header">
-        <div className="header-left">
-          <button onClick={() => navigate("/dashboard")} className="back-btn">
-            ← Back to Dashboard
-          </button>
-          <h2>🎤 Voice Chat with AI Doctor</h2>
-        </div>
-        <div className="header-right">
-          <div className="language-select">
-            <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-              <option value="en">🇺🇸 English</option>
-              <option value="hi">🇮🇳 Hindi</option>
-              <option value="mr">🇮🇳 Marathi</option>
-            </select>
-          </div>
-          <button onClick={handleLogout} className="logout-btn">
-            🚪 {t.logout}
-          </button>
-        </div>
-      </div>
-
-
-      {/* Chat History Button */}
-      <div className="chat-history-controls">
-        <button 
-          onClick={() => {
-            setShowHistory(!showHistory);
-            if (!showHistory) {
-              loadChatHistory();
-            }
-          }} 
-          className="history-btn"
-        >
-          {showHistory ? "📝 Current Chat" : "📚 Chat History"}
-        </button>
-        {/* {!showHistory && ( // Removed
-          <button onClick={startNewChat} className="new-chat-btn"> // Removed
-            🆕 {t.newChat} // Removed
-          </button> // Removed
-        )} */}
-      </div>
-
-      {showHistory ? (
-        /* Chat History View */
-        <div className="chat-history-container">
-          <div className="history-header">
-            <h3>📚 Voice Chat History</h3>
-            <p>Select a conversation to view or delete unwanted ones</p>
-          </div>
+    <div className="futuristic-voice-chat">
+      {/* Futuristic Header */}
+      <div className="futuristic-header">
+        <div className="header-content">
+          <h1 className="futuristic-title">{t.title}</h1>
+          <p className="futuristic-subtitle">{t.subtitle}</p>
           
-          {historyLoading ? (
-            <div className="loading-spinner"></div>
-          ) : chatHistory.length > 0 ? (
-            <div className="history-list">
-              {chatHistory.map((session, index) => (
-                <div key={session.id} className="history-item">
-                  <div className="session-info">
-                    <h4>Session {index + 1}</h4>
-                    <p>{session.messages.length} messages</p>
-                    <small>{session.lastMessage?.toDate?.()?.toLocaleString() || 'Unknown date'}</small>
-                  </div>
-                  <div className="session-actions">
-                    <button 
-                      onClick={() => {
-                        setChat(session.messages);
-                        setShowHistory(false);
-                      }}
-                      className="view-btn"
-                    >
-                      👁️ View
-                    </button>
+          {/* Language Selection */}
+          <div className="language-selector">
+            <select 
+              value={language} 
+              onChange={(e) => setLanguage(e.target.value)}
+              className="futuristic-select"
+            >
+              <option value="en">🌐 English</option>
+              <option value="hi">🇮🇳 हिन्दी (Hindi)</option>
+              <option value="mr">🇮🇳 मराठी (Marathi)</option>
+            </select>
+        </div>
+      </div>
+
+        <button onClick={handleLogout} className="logout-btn-futuristic">
+          {t.logout}
+        </button>
+      </div>
+
+      {/* Futuristic Chat Container */}
+      <div className="futuristic-chat-container">
+        <div className="messages-container-futuristic">
+          {messages.map((message, index) => (
+            <div key={index} className={`futuristic-message ${message.isBot ? 'bot-message' : 'user-message'}`}>
+              <div className="message-content-futuristic">
+                {message.text}
+                {message.isBot && (
+                  <TTSPlayer text={message.text} lang={message.lang} />
+                )}
                   </div>
                 </div>
               ))}
+          {loading && (
+            <div className="loading-message-futuristic">
+              <div className="loading-animation">
+                <div className="pulse-dot"></div>
+                <div className="pulse-dot"></div>
+                <div className="pulse-dot"></div>
             </div>
-          ) : (
-            <div className="no-history">
-              <div className="no-history-icon">📚</div>
-              <h3>No voice chat history yet</h3>
-              <p>Start a voice conversation to see your history here</p>
+              <span>{t.thinking}</span>
             </div>
           )}
         </div>
-      ) : (
-        /* Current Chat View - Default */
-        <>
-          {/* Chat Window */}
-          <div className="chat-window" ref={chatRef}>
-            {chat.length === 0 && (
-              <div className="welcome-message">
-                <div className="ai-avatar">👨‍⚕️</div>
-                <h3>{t.welcomeTitle}</h3>
-                <p>{t.welcomeSubtitle}</p>
-                <div className="suggestions">
-                  <button onClick={() => setInput(t.suggestion1)}>{t.suggestion1}</button>
-                  <button onClick={() => setInput(t.suggestion2)}>{t.suggestion2}</button>
-                  <button onClick={() => setInput(t.suggestion3)}>{t.suggestion3}</button>
-                </div>
+
+        {/* Futuristic Input Area */}
+        <div className="futuristic-input-container">
+          <div className="input-wrapper-futuristic">
+            <textarea
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyPress={handleKeyPress}
+              placeholder={t.inputPlaceholder}
+              className="futuristic-textarea"
+            />
+            <div className="input-tip-futuristic">
+              {t.tip}
               </div>
-            )}
-            
-            {chat.map((msg, i) => (
-              <div key={msg.id || i} className={`chat-bubble ${msg.role}`}>
-                <div className="message-content">
-                  <div className="message-avatar">
-                    {msg.role === "user" ? "👤" : "👨‍⚕️"}
-                  </div>
-                  <div className="message-text">
-                    <div dangerouslySetInnerHTML={{ __html: formatReply(msg.text) }}></div>
-                    <span className="timestamp">{msg.time}</span>
-                  </div>
-                </div>
-                {msg.role === "ai" && (
-                  <div className="quick-questions">
-                    <button onClick={() => setInput("How long should I take this medication?")} className="quick-btn">
-                      {t.quickQuestion1}
-                    </button>
-                    <button onClick={() => setInput("When should I see a doctor?")} className="quick-btn">
-                      {t.quickQuestion2}
-                    </button>
-                    <button onClick={() => setInput("Are there any side effects?")} className="quick-btn">
-                      {t.quickQuestion3}
-                    </button>
-                    <button onClick={() => setInput("What else should I know?")} className="quick-btn">
-                      {t.quickQuestion4}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-            
-            {loading && (
-              <div className="typing-indicator">
-                <div className="typing-dots">
-                  <span></span>
-                  <span></span>
-                  <span></span>
-                </div>
-                <p>{t.typingIndicator}</p>
-              </div>
-            )}
           </div>
 
-          {/* Voice Controls */}
-          <div className="voice-controls">
+          <div className="futuristic-controls">
+            {/* Interactive Mic Button */}
             <button 
-              onClick={handleMicInput} 
-              className={`mic-btn ${listening ? 'listening' : ''}`}
-              disabled={speaking}
+              onClick={isListening ? stopListening : startListening}
+              disabled={loading}
+              className={`mic-button-futuristic ${isListening ? 'listening' : ''}`}
             >
-              {listening ? t.listening : t.mic}
+              <div className="mic-icon">
+                {isListening ? '🛑' : '🎤'}
+              </div>
+              <div className="mic-ripple"></div>
             </button>
             
-            {speaking && (
               <button 
-                onClick={paused ? resumeSpeaking : pauseSpeaking} 
-                className="pause-btn"
-                style={{margin: '5px', padding: '8px 16px', backgroundColor: paused ? '#4CAF50' : '#FF9800', color: 'white', border: 'none', borderRadius: '5px'}}
-              >
-                {paused ? "▶️" : "⏸️"} {paused ? t.resume : t.pause}
+              onClick={handleSendMessage}
+              disabled={loading || !inputMessage.trim()}
+              className="send-button-futuristic"
+            >
+              <span className="send-text">{loading ? t.sending : t.send}</span>
+              <div className="send-arrow">→</div>
               </button>
-            )}
-            {speaking && (
-              <div className="tts-progress" style={{display:'flex',alignItems:'center',gap:'8px',width:'100%',maxWidth:'520px',marginTop:'8px'}}>
-                <button 
-                  onClick={replay3s} 
-                  className="small-btn"
-                  style={{padding: '4px 8px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '3px', fontSize: '12px'}}
-                >
-                  ⏪ 3s
-                </button>
-                <div 
-                  className="progress-bar" 
-                  onClick={(e)=>{
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const ratio = (e.clientX - rect.left) / rect.width;
-                    seekToMs(ratio * (totalMs || 0));
-                  }}
-                  style={{flex:1,height:'8px',background:'#e5e7eb',borderRadius:'999px',cursor:'pointer',position:'relative'}}
-                >
-                  <div 
-                    style={{position:'absolute',left:0,top:0,bottom:0,width: totalMs? `${Math.min(100, (elapsedMs/totalMs)*100)}%`:'0%',background:'#4A90E2',borderRadius:'999px'}}
-                  />
-                </div>
-                <button 
-                  onClick={skip5s} 
-                  className="small-btn"
-                  style={{padding: '4px 8px', backgroundColor: '#2196F3', color: 'white', border: 'none', borderRadius: '3px', fontSize: '12px'}}
-                >
-                  5s ⏩
-                </button>
+            </div>
+          </div>
               </div>
-            )}
-          </div>
 
-          {/* Input Area */}
-          <div className="chat-input-area">
-            <div className="input-container">
-              <textarea
-                rows="2"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder={t.placeholder}
-                className="chat-input"
-              />
-              <button 
-                onClick={sendMessage} 
-                disabled={loading || !input.trim()}
-                className="send-btn"
-              >
-                {loading ? "⏳" : "📤"}
-              </button>
-            </div>
-            
-            <div className="chat-controls">
-              <button onClick={clearChat} className="clear-btn">
-                🗑️ {t.clearChat}
-              </button>
-              <button onClick={() => navigate("/text-chat")} className="text-btn">
-                {t.switchToText}
-              </button>
-            </div>
-          </div>
+      <div className="disclaimer-futuristic">
+        {t.disclaimer}
+              </div>
 
-        </>
-      )}
+      <style jsx>{`
+        .futuristic-voice-chat {
+          min-height: 100vh;
+          background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #16213e 100%);
+          color: #ffffff;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          position: relative;
+          overflow: hidden;
+        }
+
+        .futuristic-voice-chat::before {
+          content: '';
+          position: absolute;
+          top: 0;
+          left: 0;
+          right: 0;
+          bottom: 0;
+          background: 
+            radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
+            radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
+            radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.2) 0%, transparent 50%);
+          pointer-events: none;
+        }
+
+        .futuristic-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          padding: 2rem;
+          background: rgba(255, 255, 255, 0.05);
+          backdrop-filter: blur(10px);
+          border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header-content {
+          flex: 1;
+        }
+
+        .futuristic-title {
+          font-size: 2.5rem;
+          font-weight: 700;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+          margin: 0 0 0.5rem 0;
+          text-shadow: 0 0 30px rgba(102, 126, 234, 0.5);
+        }
+
+        .futuristic-subtitle {
+          font-size: 1.1rem;
+          color: rgba(255, 255, 255, 0.8);
+          margin: 0 0 1rem 0;
+        }
+
+        .language-selector {
+          display: inline-block;
+        }
+
+        .futuristic-select {
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 12px;
+          padding: 0.75rem 1rem;
+          color: white;
+          font-size: 1rem;
+          backdrop-filter: blur(10px);
+          transition: all 0.3s ease;
+        }
+
+        .futuristic-select:focus {
+          outline: none;
+          border-color: #667eea;
+          box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .logout-btn-futuristic {
+          background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+          border: none;
+          border-radius: 12px;
+          padding: 0.75rem 1.5rem;
+          color: white;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+        }
+
+        .logout-btn-futuristic:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        }
+
+        .futuristic-chat-container {
+          max-width: 1200px;
+          margin: 0 auto;
+          padding: 2rem;
+          height: calc(100vh - 200px);
+          display: flex;
+          flex-direction: column;
+        }
+
+        .messages-container-futuristic {
+          flex: 1;
+          overflow-y: auto;
+          padding: 1rem;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 20px;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          backdrop-filter: blur(10px);
+          margin-bottom: 2rem;
+        }
+
+        .futuristic-message {
+          margin-bottom: 1.5rem;
+          animation: slideIn 0.3s ease;
+        }
+
+        .user-message {
+          text-align: right;
+        }
+
+        .bot-message {
+          text-align: left;
+        }
+
+        .message-content-futuristic {
+          display: inline-block;
+          max-width: 70%;
+          padding: 1rem 1.5rem;
+          border-radius: 20px;
+          background: linear-gradient(135deg, rgba(102, 126, 234, 0.1), rgba(118, 75, 162, 0.1));
+          border: 1px solid rgba(102, 126, 234, 0.2);
+          backdrop-filter: blur(10px);
+          word-wrap: break-word;
+          position: relative;
+        }
+
+        .user-message .message-content-futuristic {
+          background: linear-gradient(135deg, rgba(255, 107, 107, 0.1), rgba(238, 90, 36, 0.1));
+          border-color: rgba(255, 107, 107, 0.2);
+        }
+
+        .loading-message-futuristic {
+          display: flex;
+          align-items: center;
+          gap: 1rem;
+          color: rgba(255, 255, 255, 0.8);
+          font-style: italic;
+        }
+
+        .loading-animation {
+          display: flex;
+          gap: 0.5rem;
+        }
+
+        .pulse-dot {
+          width: 8px;
+          height: 8px;
+          background: #667eea;
+          border-radius: 50%;
+          animation: pulse 1.5s infinite;
+        }
+
+        .pulse-dot:nth-child(2) {
+          animation-delay: 0.2s;
+        }
+
+        .pulse-dot:nth-child(3) {
+          animation-delay: 0.4s;
+        }
+
+        .futuristic-input-container {
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 20px;
+          padding: 1.5rem;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          backdrop-filter: blur(10px);
+        }
+
+        .input-wrapper-futuristic {
+          margin-bottom: 1rem;
+        }
+
+        .futuristic-textarea {
+          width: 100%;
+          min-height: 80px;
+          background: rgba(255, 255, 255, 0.1);
+          border: 1px solid rgba(255, 255, 255, 0.2);
+          border-radius: 15px;
+          padding: 1rem;
+          color: white;
+          font-size: 1rem;
+          resize: vertical;
+          transition: all 0.3s ease;
+          backdrop-filter: blur(10px);
+        }
+
+        .futuristic-textarea:focus {
+          outline: none;
+          border-color: #667eea;
+          box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .futuristic-textarea::placeholder {
+          color: rgba(255, 255, 255, 0.6);
+        }
+
+        .input-tip-futuristic {
+          margin-top: 0.5rem;
+          font-size: 0.9rem;
+          color: rgba(255, 255, 255, 0.7);
+        }
+
+        .futuristic-controls {
+          display: flex;
+          gap: 1rem;
+          align-items: center;
+        }
+
+        .mic-button-futuristic {
+          position: relative;
+          width: 60px;
+          height: 60px;
+          border-radius: 50%;
+          border: none;
+          background: linear-gradient(135deg, #667eea, #764ba2);
+          color: white;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 1.5rem;
+          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .mic-button-futuristic:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .mic-button-futuristic.listening {
+          background: linear-gradient(135deg, #ff6b6b, #ee5a24);
+          animation: pulse 1s infinite;
+        }
+
+        .mic-ripple {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 100%;
+          height: 100%;
+          border-radius: 50%;
+          background: rgba(255, 255, 255, 0.3);
+          transform: translate(-50%, -50%) scale(0);
+          animation: ripple 2s infinite;
+        }
+
+        .send-button-futuristic {
+          flex: 1;
+          height: 60px;
+          background: linear-gradient(135deg, #667eea, #764ba2);
+          border: none;
+          border-radius: 15px;
+          color: white;
+          font-weight: 600;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 0.5rem;
+          box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .send-button-futuristic:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .send-button-futuristic:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          transform: none;
+        }
+
+        .send-arrow {
+          font-size: 1.2rem;
+          transition: transform 0.3s ease;
+        }
+
+        .send-button-futuristic:hover .send-arrow {
+          transform: translateX(3px);
+        }
+
+        .tts-button {
+          background: linear-gradient(135deg, #4CAF50, #45a049);
+          border: none;
+          border-radius: 8px;
+          padding: 0.5rem 1rem;
+          color: white;
+          font-size: 0.9rem;
+          cursor: pointer;
+          transition: all 0.3s ease;
+          margin-top: 0.5rem;
+        }
+
+        .tts-button:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 4px 10px rgba(76, 175, 80, 0.3);
+        }
+
+        .disclaimer-futuristic {
+          text-align: center;
+          padding: 1rem 2rem;
+          color: rgba(255, 255, 255, 0.7);
+          font-size: 0.9rem;
+          background: rgba(255, 255, 255, 0.05);
+          border-radius: 15px;
+          margin: 1rem 2rem;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes pulse {
+          0%, 100% {
+            opacity: 1;
+          }
+          50% {
+            opacity: 0.5;
+          }
+        }
+
+        @keyframes ripple {
+          0% {
+            transform: translate(-50%, -50%) scale(0);
+            opacity: 1;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(1);
+            opacity: 0;
+          }
+        }
+
+        /* Scrollbar Styling */
+        .messages-container-futuristic::-webkit-scrollbar {
+          width: 8px;
+        }
+
+        .messages-container-futuristic::-webkit-scrollbar-track {
+          background: rgba(255, 255, 255, 0.1);
+          border-radius: 10px;
+        }
+
+        .messages-container-futuristic::-webkit-scrollbar-thumb {
+          background: linear-gradient(135deg, #667eea, #764ba2);
+          border-radius: 10px;
+        }
+
+        .messages-container-futuristic::-webkit-scrollbar-thumb:hover {
+          background: linear-gradient(135deg, #5a6fd8, #6a4190);
+        }
+      `}</style>
     </div>
   );
-}
+};
 
 export default VoiceChat;
