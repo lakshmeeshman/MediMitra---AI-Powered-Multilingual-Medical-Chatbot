@@ -5,7 +5,7 @@ A comprehensive medical chatbot application with AI-powered diagnosis, avatar in
 ## 🏥 Features
 
 - **AI-Powered Medical Chat**: Intelligent medical consultation using advanced NLP
-- **Avatar Interaction**: Real-time avatar chat with D-ID streaming
+- **Avatar Interaction**: Real-time avatar chat with D-ID streaming 
 - **Voice Chat**: Speech-to-text and text-to-speech capabilities
 - **Appointment Booking**: Schedule medical appointments
 - **Medical Shop Locator**: Find nearby medical stores
